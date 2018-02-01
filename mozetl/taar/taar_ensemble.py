@@ -231,15 +231,13 @@ def stacking(train, test):
 # Test stacking on the sonar dataset
 seed(1)
 # load and prepare data
-filename = "/Users/mlopatka/Desktop/ensemble/sonar_all_data.csv"
-dataset = load_csv(filename)
-# convert string attributes to integers
-for i in range(len(dataset[0]) - 1):
-    str_column_to_float(dataset, i)
-# convert class column to integers
-str_column_to_int(dataset, len(dataset[0]) - 1)
+dataset = []
+# this will be a sample from telemetry.
+
+# TODO: load a sample of clients who have several addons installed, include filtering for
+# non-sideloaded and ensure diversity sampling accross the addons space is preserved.
+
 n_folds = 3
 scores = evaluate_algorithm(dataset, stacking, n_folds)
-print stacking
 print('Scores: %s' % scores)
 print('Mean Accuracy: %.3f%%' % (sum(scores) / float(len(scores))))
