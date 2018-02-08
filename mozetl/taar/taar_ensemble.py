@@ -27,6 +27,12 @@ def cllr(lrs_on_target, lrs_off_target):
 
 
 def evalcllr(recommendations_list, unmasked_addons):
+    """ A helper function to evaluate the performance of a particular recommendation 
+    strategy on a client with a set of installed addons that have been patially masked.
+    Keyword arguments:
+    recommendations_list -- a list of tuples containing (guid, confidence) pairs.
+    unmasked_addons -- a list of the true installed addon guids for a test client.
+    """
     # Organizer function to extract weights from recommendation list for passing to cllr.
     lrs_on_target_helper = [item[1] for item in recommendations_list if item[0] in unmasked_addons]
     lrs_off_target_helper = [item[1] for item in recommendations_list if item[0] not in unmasked_addons]
@@ -39,7 +45,8 @@ def load_training_data(sc):
     # TODO: query telemetry to get a set of recent clients (filtering by profile creation date)
     # TODO: filter based on number of addons installed (>=3)
     # TODO: remove unnecessary columns to get a feature vector that TAAR will happily accept
-    # and provide recommendations for
+    # and provide recommendations against. 
+    # This code should already exist verbatim, in the ETL job for TAAR similarity, as a query for addon donors.
     return dataset
 
 # All this is not needed, delete after getting a functional version
@@ -78,9 +85,12 @@ def cross_validation_split(dataset, n_folds):
     return dataset_split
 
 
-# Calculate accuracy percentage
+# Calculate accuracy percentage - substitute accuracy percentage for cllr
+# We could use 1.0-cllr as a metric to reuse even more existing code.
 # This will be the cllr code now.
-# TODO: include the (prediction, confidence) tuple in the input vector so that evalCLLR can be called.
+# TODO: include the (prediction, confidence) tuple in the INPUT vector so that evalCLLR can be called
+# TODO: still include the input vector "actual" which will be passed to the evalcllr function as
+# unmasked_addons.
 def accuracy_metric(actual, predicted):
     correct = 0
     for i in range(len(actual)):
@@ -203,8 +213,10 @@ def to_stacked_row(models, predict_list, row):
 
 
 # Stacked Generalization Algorithm
-# TODO: thisis where the actual work is, we need to get a comparable flow with the TAAR models as with these other
-# standard ML models, the gradient decent
+# TODO: this is where the actual work is, we need to get a comparable flow 
+# utilizing the TAAR models as with these on the standard ML models, 
+# the gradient decent algorithm should iterate to a set of meta-parameters 
+# weighting the recommneder modules.
 def stacking(train, test):
     # TODO model list now refers to instantiated TAAR recommender modules.
     model_list = [knn_model, perceptron_model]
@@ -230,12 +242,12 @@ def stacking(train, test):
 
 # Test stacking on the sonar dataset
 seed(1)
-# load and prepare data
-dataset = []
-# this will be a sample from telemetry.
-
+# load and prepare data returned by load_training_data(sc)
 # TODO: load a sample of clients who have several addons installed, include filtering for
 # non-sideloaded and ensure diversity sampling accross the addons space is preserved.
+
+dataset = []
+# This will be a sample from telemetry.
 
 n_folds = 3
 scores = evaluate_algorithm(dataset, stacking, n_folds)
