@@ -3,8 +3,13 @@ derby.log
 .DS_Store
 .idea/
 
+Untitled.ipynb
+.ipynb_checkpoints/
+
+temp/
 dist/
 build/
+
 .tox/
 .coverage
 .cache/
