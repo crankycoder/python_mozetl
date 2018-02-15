@@ -13,7 +13,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def load_training_from_telemetry():
+def load_training_from_telemetry(spark):
+    """ load some training data from telemetry given a sparkContext
+    """
+    sc = spark.sparkContext
     # Define the set of feature names to be used in the donor computations.
     AMO_DUMP_BUCKET = 'telemetry-parquet'
     AMO_DUMP_KEY = 'telemetry-ml/addon_recommender/addons_database.json'
@@ -33,7 +36,7 @@ def load_training_from_telemetry():
             s3 = boto3.client('s3')
             s3_contents = s3.get_object(Bucket=AMO_DUMP_BUCKET, Key=AMO_DUMP_KEY)
             amo_dump = json.loads(s3_contents['Body'].read())
-        except ClientError:
+        except Exception:
             logger.exception("Failed to download from S3", extra={
                 "bucket": AMO_DUMP_BUCKET,
                 "key": AMO_DUMP_KEY})
