@@ -2,7 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from random import randrange
+from random import randint
 
 
 class XValidator:
@@ -46,7 +46,7 @@ class XValidator:
         for fold_i in range(self._n_folds):
             fold = list()
             while len(fold) < fold_size:
-                index = randrange(len(dataset_copy))
+                index = randint(0, len(dataset_copy))
                 fold.append(dataset_copy.pop(index))
             dataset_split.append(fold)
 
@@ -65,8 +65,18 @@ class XValidator:
         masked_addons_by_clientid = {}
         for idx, client_data in enumerate(dataslice):
             client_data['addon_mask_id'] = idx
-            masked_addons_by_clientid[idx] = client_data['installed_addons'][self._addons_minsize:]
-            client_data['installed_addons'] = client_data['installed_addons'][:self._addons_minsize]
+
+            # use a random selection of addons
+            installed_addon_set = list(client_data['installed_addons'])
+
+            keep_set = set()
+            for i in range(self._addons_minsize):
+                idx = randint(0, len(installed_addon_set))
+                keep_set.add(installed_addon_set.pop(idx))
+            masked_addon_set = set(installed_addon_set) - keep_set
+
+            masked_addons_by_clientid[idx] = list(masked_addon_set)
+            client_data['installed_addons'] = list(keep_set)
 
         return (dataslice, masked_addons_by_clientid)
 

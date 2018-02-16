@@ -23,6 +23,10 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+RECOMMENDERS = [CollaborativeRecommender(), LegacyRecommender(),
+              LocaleRecommender(), SimilarityRecommender(),
+              RecommendationManager()]
+
 # Calculate accuracy percentage - substitute accuracy percentage for cllr
 # We could use 1.0-cllr as a metric to reuse even more existing code.
 # This will be the cllr code now.
@@ -31,19 +35,54 @@ logger = logging.getLogger(__name__)
 # TODO: still include the input vector "actual" which will be passed
 # to the eval_cllr function as unmasked_addons.
 def accuracy_metric(actual, predicted):
+    """
+    Actual and predicted are both dictionaries that map client_id to a
+    list of addons
+    """
     correct = 0
-    for i in range(len(actual)):
-        if actual[i] == predicted[i]:
-            correct += 1
-    return correct / float(len(actual)) * 100.0
+    total_addons = 0
+    for client_id, actual_addons in actual.items():
+        total_addons += len(actual_addons)
+        predicted_addons = predicted[client_id]
+        for predicted_addon, predicted_weight in predicted_addons:
+            # TODO: the predicted_weight is going to be lost here - we
+            # need to wire it into eval_cllr???
+            if predicted_addon in actual_addons:
+                correct += 1
+    return correct / float(total_addons) * 100.0
+
+
+class RecommenderProxy:
+    def __init__(self, base_recommender):
+        self._recommender = base_recommender
+
+    def aggregate_recommend(self, train_set, ignored_test_set, **kwargs):
+        """
+        This function runs recommendations for a given recommender
+        against all client records in the train_set.  
+        
+        TODO: The testset argument is ignored for now.  Not sure if
+        this is correct.
+
+        The single required paramater in kwargs is 'MIN_ADDONSETSIZE'
+
+        Return a dictionary of client_id->recommendations
+        """
+        results = {}
+        for client_data in train_set:
+            addon_mask_id = client_data['addon_mask_id']
+            recommendations = self._recommender.recommend(client_data, 
+                                                          limit=kwargs['MIN_ADDONSETSIZE'])
+            results[addon_mask_id] = recommendations
+        return results
+
 
 
 # Evaluate an algorithm using a cross validation split
-def evaluate_algorithm(dataset, algorithm, n_folds, *args):
-    # TODO: here the algorithm argument should be a list of taar modules.
+def evaluate_algorithm(dataset, n_folds, **kwargs):
 
-    # TODO: copy MIN_ADDONSETSIZE from *args
-    MIN_ADDONSETSIZE = 2
+    MIN_ADDONSETSIZE = kwargs['MIN_ADDONSETSIZE']
+
     xvalidator = XValidator(n_folds, MIN_ADDONSETSIZE)
     folds = xvalidator.cross_validation_split(dataset)
 
@@ -60,16 +99,29 @@ def evaluate_algorithm(dataset, algorithm, n_folds, *args):
         train_set = itertools.chain.from_iterable(train_set)
         test_set = copy.copy(fold)
 
-        # TODO this should just call the appropriate TAAR module (collaborative, similarity, or locale)
+        # This calls each of the TAAR recommender modules :
+        # (collaborative, similarity, or locale)
         # and get the recommendations over the (masked) training clients.
         # 1- The unmasked installed addons in that client is "actual"
         # 2- the output of the TAAR module that was called is "predicted"
-        predicted = algorithm(train_set, test_set, *args)
 
-        actual = [row[-1] for row in fold]
-        accuracy = accuracy_metric(actual, predicted)
-        # TODO: accuracy will now be CLLR
-        scores.append(accuracy)
+        masked_train_set, masked_train_set_removed_addons = xvalidator.mask_addons(train_set)
+
+        #masked_test_set  = xvalidator.mask_addons(test_set)
+        masked_test_set  = None
+        for recommender in RECOMMENDERS:
+
+            # Note that the masked_test_set is set to None because it
+            # is currently ignored
+            proxy = RecommenderProxy(recommender)
+            predicted = proxy.aggregate_recommend(train_set,
+                                                  masked_test_set,
+                                                  **kwargs)
+
+            actual = masked_train_set_removed_addons
+            accuracy = accuracy_metric(actual, predicted)
+            # TODO: accuracy will now be CLLR
+            scores.append(accuracy)
     return scores
 
 
@@ -89,16 +141,10 @@ def to_stacked_row(models, predict_list, row):
 # the gradient decent algorithm should iterate to a set of meta-parameters
 # weighting the recommneder modules.
 def stacking(train, test):
-    # model list now refers to instantiated TAAR recommender modules.
-    model_list = [CollaborativeRecommender(), LegacyRecommender(),
-                  LocaleRecommender(), SimilarityRecommender(),
-                  RecommendationManager()]
-
-
     predict_list = [knn_predict, perceptron_predict]
     models = list()
-    for i in range(len(model_list)):
-        model = model_list[i](train)
+    for i in range(len(RECOMMENDERS)):
+        model = RECOMMENDERS[i](train)
         models.append(model)
     stacked_dataset = list()
     for row in train:
@@ -131,13 +177,18 @@ def logistic_regression_model(train, l_rate=0.01, n_epoch=5000):
 # Test stacking on the sonar dataset
 seed(1)
 # load and prepare data returned by load_training_data(sc)
-# TODO: load a sample of clients who have several addons installed, include filtering for
+# load a sample of clients who have several addons installed, include filtering for
 # non-sideloaded and ensure diversity sampling accross the addons space is preserved.
 
 dataset = []
+with open('datasample.txt','r') as file_in:
+    line = file_in.readline()
+    dataset.append(json.loads(line))
+
 # This will be a sample from telemetry.
 
 n_folds = 3
-scores = evaluate_algorithm(dataset, stacking, n_folds)
+scores = evaluate_algorithm(dataset, n_folds, MIN_ADDONSETSIZE=2)
+
 print('Scores: %s' % scores)
 print('Mean Accuracy: %.3f%%' % (sum(scores) / float(len(scores))))
