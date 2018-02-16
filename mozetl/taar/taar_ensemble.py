@@ -15,8 +15,9 @@ from .xvalidator import XValidator        # noqa
 from taar.recommenders import CollaborativeRecommender
 from taar.recommenders import LegacyRecommender
 from taar.recommenders import LocaleRecommender
-from taar.recommenders import RecommendationManager
 from taar.recommenders import SimilarityRecommender
+
+# TODO: import the load_training_from_telemetry where
 
 import logging
 
@@ -86,6 +87,10 @@ def evaluate_algorithm(dataset, n_folds, **kwargs):
     xvalidator = XValidator(n_folds, MIN_ADDONSETSIZE)
     folds = xvalidator.cross_validation_split(dataset)
 
+    # Scores is a matrix with rows of folds, columns of recommenders
+    # Logistic regression will then optimize the matrix to be
+    # co-efficient parameters.
+
     scores = list()
     for fold in folds:
 
@@ -125,8 +130,10 @@ def evaluate_algorithm(dataset, n_folds, **kwargs):
     return scores
 
 
-# Make predictions with sub-models and construct a new stacked row
 def to_stacked_row(models, predict_list, row):
+    """
+    Make predictions with sub-models and construct a new stacked row
+    """
     stacked_row = list()
     for model in models:
         prediction = predict_list[i](model, row)
@@ -140,24 +147,21 @@ def to_stacked_row(models, predict_list, row):
 # utilizing the TAAR models as with these on the standard ML models,
 # the gradient decent algorithm should iterate to a set of meta-parameters
 # weighting the recommneder modules.
-def stacking(train, test):
-    predict_list = [knn_predict, perceptron_predict]
-    models = list()
+def stacking(train, ignored):
+    predict_list = RECOMMENDERS
+
+    recommendation_outputs = list()
     for i in range(len(RECOMMENDERS)):
-        model = RECOMMENDERS[i](train)
-        models.append(model)
+        # train is the dataset of client_id json blobs
+        recommendation_outputs.append( RECOMMENDERS[i](train) )
+
     stacked_dataset = list()
     for row in train:
-        stacked_row = to_stacked_row(models, predict_list, row)
+        stacked_row = to_stacked_row(recommendation_outputs, predict_list, row)
         stacked_dataset.append(stacked_row)
     stacked_model = logistic_regression_model(stacked_dataset)
     predictions = list()
-    for row in test:
-        stacked_row = to_stacked_row(models, predict_list, row)
-        stacked_dataset.append(stacked_row)
-        prediction = logistic_regression_predict(stacked_model, stacked_row)
-        prediction = round(prediction)
-        predictions.append(prediction)
+
     return predictions
 
 
