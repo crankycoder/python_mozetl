@@ -116,8 +116,8 @@ def stacking(train, ignored):
     for client_data in train:
         stacked_row = []
         for recommender in RECOMMENDERS:
-            # Strip out the weight, just keep the GUID
-            stacked_row.append([x[0] for x in recommender.recommend(client_data, 10)])
+            # Strip out the GUID, just keep the weight
+            stacked_row.append([x[1] for x in recommender.recommend(client_data, 10)])
         stacked_dataset.append(stacked_row)
 
     predictions = logistic_regression_model(stacked_dataset)
