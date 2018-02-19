@@ -27,12 +27,17 @@ RECOMMENDERS = [CollaborativeRecommender(), LegacyRecommender(),
 
 
 def row_to_taar_json(row):
+    """ We need the row converted to a dictionary to allow us to
+    inject a mask id when cross referencing the 'ground truth'. That
+    is - when we compare the predicted addons vs the masked addons
+    that were removed from a client.
+    """
     rDict = row.asDict()
     taar_jdata = {"geo_city": rDict.get('geo_city', ''),
                   "subsession_length": rDict.get('subsession_length', 0),
                   "locale": rDict.get('locale', ''),
                   "os": rDict.get('os', ''),
-                  "installed_addons": rDict.get('addon_ids', []),
+                  "installed_addons": rDict.get('installed_addons', []),
                   "disabled_addons_ids": [],
                   "bookmark_count": rDict.get('bookmark_count', 0),
                   "tab_open_count": rDict.get('tab_open_count', 0),
@@ -303,7 +308,15 @@ def load_training_from_telemetry(spark):
     addons_info_frame = get_addons_per_client(client_features_frame, 4)
     log.info("Filtered clients with only 4 addons")
 
-    taar_training = addons_info_frame.join(client_features_frame, 'client_id', 'inner').drop('active_addons')
+    taar_training = addons_info_frame.join(client_features_frame, 'client_id', 'inner')\
+                                     .drop('active_addons')\
+                                     .selectExpr("geo_city",
+                                                 "subsession_length",
+                                                 "locale",
+                                                 "os",
+                                                 "addon_ids as installed_addons",
+                                                 "total_uri",
+                                                 "unique_tlds")
     log.info("JOIN completed on TAAR training data")
 
     return taar_training
