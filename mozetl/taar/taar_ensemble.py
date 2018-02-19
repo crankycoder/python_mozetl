@@ -161,6 +161,10 @@ def cllr(lrs_on_target, lrs_off_target):
     Niko Brummer and Johan du Preez, Application-Independent Evaluation of Speaker Detection"
     Computer Speech and Language, 2005
     """
+    if len(lrs_on_target) == 0:
+        # No matches means cLLR is maximal cost
+        return 1.0
+
     lrs_on_target = numpy.log(lrs_on_target[~numpy.isnan(lrs_on_target)])
     lrs_off_target = numpy.log(lrs_off_target[~numpy.isnan(lrs_off_target)])
 
