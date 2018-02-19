@@ -390,17 +390,19 @@ class XValidator:
         new_dataslice = []
         for idx, client_data in enumerate(dataslice):
             client_data['addon_mask_id'] = idx
+            print("Processing idx: %d" % idx)
 
             # use a random selection of addons
             installed_addon_set = list(client_data['installed_addons'])
 
             keep_set = set()
             for i in range(self._addons_minsize):
-                idx = randrange(0, len(installed_addon_set))
-                keep_set.add(installed_addon_set.pop(idx))
-            masked_addon_set = set(installed_addon_set) - keep_set
+                item = installed_addon_set.pop(randrange(0, len(installed_addon_set)))
+                keep_set.add(item)
 
+            masked_addon_set = set(installed_addon_set) - keep_set
             masked_addons_by_clientid[idx] = list(masked_addon_set)
+            print("Processing size of map: %d" % len(masked_addons_by_clientid))
             client_data['installed_addons'] = list(keep_set)
             new_dataslice.append(client_data)
 
