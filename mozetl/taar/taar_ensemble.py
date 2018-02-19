@@ -170,11 +170,11 @@ def cllr(lrs_on_target, lrs_off_target):
         # No matches means cLLR is maximal cost
         return 1.0
 
-    lrs_on_target = numpy.log(lrs_on_target[~numpy.isnan(lrs_on_target)])
-    lrs_off_target = numpy.log(lrs_off_target[~numpy.isnan(lrs_off_target)])
+    tmp_lrs_on_target = numpy.log(lrs_on_target[~numpy.isnan(lrs_on_target)])
+    tmp_lrs_off_target = numpy.log(lrs_off_target[~numpy.isnan(lrs_off_target)])
 
-    c1 = numpy.mean(neg_log_sig(lrs_on_target)) / numpy.log(2)
-    c2 = numpy.mean(neg_log_sig(-1.0 * lrs_off_target)) / numpy.log(2)
+    c1 = numpy.mean(neg_log_sig(tmp_lrs_on_target)) / numpy.log(2)
+    c2 = numpy.mean(neg_log_sig(-1.0 * tmp_lrs_off_target)) / numpy.log(2)
     return (c1 + c2) / 2
 
 
@@ -188,8 +188,10 @@ def eval_cllr(recommendations_list, unmasked_addons):
     client. Each unmasked addon is expressed as a GUID.
     """
     # Organizer function to extract weights from recommendation list for passing to cllr.
-    lrs_on_target_helper = [item[1] for item in recommendations_list if item[0] in unmasked_addons]
-    lrs_off_target_helper = [item[1] for item in recommendations_list if item[0] not in unmasked_addons]
+    # Note that we need to turn these into numpy arrays for the cLLR
+    # function to execute correctly
+    lrs_on_target_helper = numpy.array([item[1] for item in recommendations_list if item[0] in unmasked_addons])
+    lrs_off_target_helper = numpy.array([item[1] for item in recommendations_list if item[0] not in unmasked_addons])
     return cllr(lrs_on_target_helper, lrs_off_target_helper)
 
 
