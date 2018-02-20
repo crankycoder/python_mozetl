@@ -132,9 +132,19 @@ def stacking(train, ignored):
 # Make a prediction with coefficients
 def logistic_regression_predict(model, row):
     yhat = model[0]
-    for i in range(len(row) - 1):
-        yhat += model[i + 1] * row[i]
-    return 1.0 / (1.0 + exp(-yhat))
+    if len(row) > 0:
+        for i in range(len(row) - 1):
+            # TODO: mlopatka - is this check correct?
+            # Should we just skip over row values where
+            # the list is empty - that is - no suggestions were
+            # successful?
+            if len(row[i]) != 0:
+                yhat += numpy.array(model[i + 1]) * row[i]
+
+    # TODO: mlopatka - i just took the mean to collapse the np.array
+    # values down, but I have no idea if that's corred.
+    result = 1.0 / (1.0 + numpy.mean([exp(x) for x in -yhat]))
+    return result
 
 
 def logistic_regression_model(train, l_rate=0.01, n_epoch=5000):
