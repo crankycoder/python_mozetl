@@ -132,9 +132,19 @@ def stacking(train, ignored):
 # Make a prediction with coefficients
 def logistic_regression_predict(model, row):
     yhat = model[0]
-    for i in range(len(row) - 1):
-        yhat += model[i + 1] * row[i]
-    return 1.0 / (1.0 + exp(-yhat))
+    if len(row) > 0:
+        for i in range(len(row) - 1):
+            # TODO: mlopatka - is this check correct?
+            # Should we just skip over row values where
+            # the list is empty - that is - no suggestions were
+            # successful?
+            if len(row[i]) != 0:
+                yhat += numpy.array(model[i + 1]) * row[i]
+
+    # TODO: mlopatka - i just took the mean to collapse the np.array
+    # values down, but I have no idea if that's corred.
+    result = 1.0 / (1.0 + numpy.mean([exp(x) for x in -yhat]))
+    return result
 
 
 def logistic_regression_model(train, l_rate=0.01, n_epoch=5000):
@@ -390,17 +400,19 @@ class XValidator:
         new_dataslice = []
         for idx, client_data in enumerate(dataslice):
             client_data['addon_mask_id'] = idx
+            print("Processing idx: %d" % idx)
 
             # use a random selection of addons
             installed_addon_set = list(client_data['installed_addons'])
 
             keep_set = set()
             for i in range(self._addons_minsize):
-                idx = randrange(0, len(installed_addon_set))
-                keep_set.add(installed_addon_set.pop(idx))
-            masked_addon_set = set(installed_addon_set) - keep_set
+                item = installed_addon_set.pop(randrange(0, len(installed_addon_set)))
+                keep_set.add(item)
 
+            masked_addon_set = set(installed_addon_set) - keep_set
             masked_addons_by_clientid[idx] = list(masked_addon_set)
+            print("Processing size of map: %d" % len(masked_addons_by_clientid))
             client_data['installed_addons'] = list(keep_set)
             new_dataslice.append(client_data)
 
