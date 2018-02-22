@@ -24,6 +24,11 @@ from boto3.dynamodb.types import Binary as DynamoBinary
 import time
 import zlib
 
+# We use the os and threading modules to generate a spark worker
+# specific identity:w
+
+import os
+import threading
 
 MAX_RECORDS = 50
 EMPTY_TUPLE = (0, 0, [], [])
@@ -109,6 +114,9 @@ class DynamoReducer(object):
         self._region_name = region_name
         self._table_name = table_name
 
+        # TODO: push this into a commandline arg
+        self.prod_iam_role = 'arn:aws:iam::361527076523:role/taar-write-dynamodb-from-dev'
+
     def push_to_dynamo(self, data_tuple):
         """
         This connects to DynamoDB and pushes records in `item_list` into
@@ -130,7 +138,20 @@ class DynamoReducer(object):
                                       )
                       } for item in data_tuple[2]]
 
-        conn = boto3.resource('dynamodb', region_name=self._region_name)
+        client = boto3.client('sts')
+        session_name = "taar_dynamo_%s_%s" % (os.getpid(),
+                                              threading.current_thread().ident)
+        # 10 minutes to flush 50 records should be ridiculously
+        # generous
+        response = client.assume_role(RoleArn=self.prod_iam_role,
+                                      RoleSessionName=session_name,
+                                      DurationSeconds=600)
+
+        raw_creds = response['Credentials']
+        cred_args = {'aws_access_key_id': raw_creds['AccessKeyId'],
+                     'aws_secret_access_key': raw_creds['SecretAccessKey'],
+                     'aws_session_token': raw_creds['SessionToken']}
+        conn = boto3.resource('dynamodb', region_name=self._region_name, **cred_args)
         table = conn.Table(self._table_name)
         try:
             with table.batch_writer(overwrite_by_pkeys=['client_id']) as batch:
