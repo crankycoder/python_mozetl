@@ -33,6 +33,8 @@ import threading
 MAX_RECORDS = 50
 EMPTY_TUPLE = (0, 0, [], [])
 
+BOTO_CREDS = {}
+
 
 def json_serial(obj):
     """JSON serializer for objects not serializable by default json code"""
@@ -125,6 +127,7 @@ class DynamoReducer(object):
         We accumulate a list of up to 50 elements long to allow debugging
         of write errors.
         """
+        global BOTO_CREDS
         # Transformt the data into something that DynamoDB will always
         # accept
         # Set TTL to 60 days from now
@@ -138,19 +141,38 @@ class DynamoReducer(object):
                                       )
                       } for item in data_tuple[2]]
 
-        client = boto3.client('sts')
-        session_name = "taar_dynamo_%s_%s" % (os.getpid(),
-                                              threading.current_thread().ident)
-        # 10 minutes to flush 50 records should be ridiculously
-        # generous
-        response = client.assume_role(RoleArn=self.prod_iam_role,
-                                      RoleSessionName=session_name,
-                                      DurationSeconds=600)
+        # Initialize credentials
 
-        raw_creds = response['Credentials']
-        cred_args = {'aws_access_key_id': raw_creds['AccessKeyId'],
-                     'aws_secret_access_key': raw_creds['SecretAccessKey'],
-                     'aws_session_token': raw_creds['SessionToken']}
+        # Try loading credentials from cache
+        cached_cred = BOTO_CREDS.get('cred', None)
+
+        cred_args = None
+        if cached_cred is not None:
+            # Check the expiry of the cached credentials
+            if cached_cred['expiry'] > datetime.now():
+                cred_args = cached_cred['cred_args']
+            else:
+                # Credentials are expired, clear them out
+                BOTO_CREDS['cred'] = None
+
+        if cred_args is None:
+            client = boto3.client('sts')
+            session_name = "taar_dynamo_%s_%s" % (os.getpid(),
+                                                  threading.current_thread().ident)
+            # 10 minutes to flush 50 records should be ridiculously
+            # generous
+            response = client.assume_role(RoleArn=self.prod_iam_role,
+                                          RoleSessionName=session_name,
+                                          DurationSeconds=600)
+
+            raw_creds = response['Credentials']
+            cred_args = {'aws_access_key_id': raw_creds['AccessKeyId'],
+                         'aws_secret_access_key': raw_creds['SecretAccessKey'],
+                         'aws_session_token': raw_creds['SessionToken']}
+
+            # Cache the credentials for 5 minutes
+            BOTO_CREDS['cred'] = {'expiry': datetime.now() + timedelta(minutes=5),
+                                  'cred_args': cred_args}
         conn = boto3.resource('dynamodb', region_name=self._region_name, **cred_args)
         table = conn.Table(self._table_name)
         try:
