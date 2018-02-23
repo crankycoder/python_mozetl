@@ -94,16 +94,6 @@ def evaluate_algorithm(dataset, n_folds, **kwargs):
     return scores
 
 
-# Make predictions with sub-models and construct a new stacked row
-def to_stacked_row(recommendation_outputs, row):
-    stacked_row = list()
-    for prediction, recommender in zip(recommendation_outputs, RECOMMENDERS):
-        prediction = recommender(prediction, row)
-        stacked_row.append(prediction)
-    stacked_row.append(row[-1])
-    return row[0:len(row) - 1] + stacked_row
-
-
 # Stacked Generalization Algorithm
 # this is where the actual work is, we need to get a comparable flow
 # utilizing the TAAR models as with these on the standard ML models,

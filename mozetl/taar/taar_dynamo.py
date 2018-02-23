@@ -33,7 +33,74 @@ import threading
 MAX_RECORDS = 50
 EMPTY_TUPLE = (0, 0, [], [])
 
-BOTO_CREDS = {}
+
+def synchronized(lock):
+    """ Synchronization decorator. """
+    def wrap(f):
+        def newFunction(*args, **kw):
+            lock.acquire()
+            try:
+                return f(*args, **kw)
+            finally:
+                lock.release()
+        return newFunction
+    return wrap
+
+
+class CredentialSingleton:
+
+    def __init__(self):
+        self._credentials = None
+        self._lock = threading.RLock()
+
+        # TODO: push this into a commandline arg
+        self.prod_iam_role = 'arn:aws:iam::361527076523:role/taar-write-dynamodb-from-dev'
+
+    def __getstate__(self):
+        return {'prod_iam_role': self.prod_iam_role,
+                'credentials': self._credentials}
+
+    def __setstate__(self, state):
+        # This is basically the constructor all over again
+        self.prod_iam_role = state['prod_iam_role']
+        self._credentials = state['credentials']
+        self._lock = threading.RLock()
+
+    def getInstance(self):
+        with self._lock:
+            # If credentials exist, make sure we haven't expire them yet
+            if self._credentials is not None:
+
+                # Credentials should expire if the expiry time is sooner
+                # than the next 5 minutes
+                five_minute_from_now = datetime.now() + timedelta(minutes=5)
+                if self._credentials['expiry'] <= five_minute_from_now:
+                    self._credentials = None
+
+            if self._credentials is None:
+                self._credentials = self.get_new_creds()
+
+            return self._credentials['cred_args']
+
+    def get_new_creds(self):
+        client = boto3.client('sts')
+        session_name = "taar_dynamo_%s_%s" % (os.getpid(),
+                                              threading.current_thread().ident)
+
+        # 30 minutes to flush 50 records should be ridiculously
+        # generous
+        response = client.assume_role(RoleArn=self.prod_iam_role,
+                                      RoleSessionName=session_name,
+                                      DurationSeconds=60*30)
+
+        raw_creds = response['Credentials']
+        cred_args = {'aws_access_key_id': raw_creds['AccessKeyId'],
+                     'aws_secret_access_key': raw_creds['SecretAccessKey'],
+                     'aws_session_token': raw_creds['SessionToken']}
+
+        # Set the expiry of this credential to be 30 minutes
+        return {'expiry': datetime.now() + timedelta(minutes=30),
+                'cred_args': cred_args}
 
 
 def json_serial(obj):
@@ -104,6 +171,9 @@ def list_transformer(row_jsonstr):
     return (0, 1, [jdata], [])
 
 
+credentials = CredentialSingleton()
+
+
 class DynamoReducer(object):
     def __init__(self, region_name=None, table_name=None):
 
@@ -116,9 +186,6 @@ class DynamoReducer(object):
         self._region_name = region_name
         self._table_name = table_name
 
-        # TODO: push this into a commandline arg
-        self.prod_iam_role = 'arn:aws:iam::361527076523:role/taar-write-dynamodb-from-dev'
-
     def push_to_dynamo(self, data_tuple):
         """
         This connects to DynamoDB and pushes records in `item_list` into
@@ -127,7 +194,6 @@ class DynamoReducer(object):
         We accumulate a list of up to 50 elements long to allow debugging
         of write errors.
         """
-        global BOTO_CREDS
         # Transformt the data into something that DynamoDB will always
         # accept
         # Set TTL to 60 days from now
@@ -141,38 +207,8 @@ class DynamoReducer(object):
                                       )
                       } for item in data_tuple[2]]
 
-        # Initialize credentials
-
-        # Try loading credentials from cache
-        cached_cred = BOTO_CREDS.get('cred', None)
-
-        cred_args = None
-        if cached_cred is not None:
-            # Check the expiry of the cached credentials
-            if cached_cred['expiry'] > datetime.now():
-                cred_args = cached_cred['cred_args']
-            else:
-                # Credentials are expired, clear them out
-                BOTO_CREDS['cred'] = None
-
-        if cred_args is None:
-            client = boto3.client('sts')
-            session_name = "taar_dynamo_%s_%s" % (os.getpid(),
-                                                  threading.current_thread().ident)
-            # 10 minutes to flush 50 records should be ridiculously
-            # generous
-            response = client.assume_role(RoleArn=self.prod_iam_role,
-                                          RoleSessionName=session_name,
-                                          DurationSeconds=600)
-
-            raw_creds = response['Credentials']
-            cred_args = {'aws_access_key_id': raw_creds['AccessKeyId'],
-                         'aws_secret_access_key': raw_creds['SecretAccessKey'],
-                         'aws_session_token': raw_creds['SessionToken']}
-
-            # Cache the credentials for 5 minutes
-            BOTO_CREDS['cred'] = {'expiry': datetime.now() + timedelta(minutes=5),
-                                  'cred_args': cred_args}
+        # Obtain credentials from the singleton
+        cred_args = credentials.getInstance()
         conn = boto3.resource('dynamodb', region_name=self._region_name, **cred_args)
         table = conn.Table(self._table_name)
         try:
@@ -246,8 +282,12 @@ def etl(spark, run_date, region_name, table_name):
     operation in Spark.
     """
 
-    dynReducer = DynamoReducer(region_name, table_name)
+    rdd = extract_transform(spark, run_date)
+    result = load_rdd(region_name, table_name, rdd)
+    return result
 
+
+def extract_transform(spark, run_date, sample_rate=None):
     currentDate = run_date
     currentDateString = currentDate.strftime("%Y%m%d")
     print("Processing %s" % currentDateString)
@@ -255,6 +295,9 @@ def etl(spark, run_date, region_name, table_name):
     # Get the data for the desired date out of parquet
     template = "s3://telemetry-parquet/main_summary/v4/submission_date_s3=%s"
     datasetForDate = spark.read.parquet(template % currentDateString)
+
+    if sample_rate is not None:
+        datasetForDate = datasetForDate.sample(False, sample_rate)
 
     print("Parquet data loaded")
 
@@ -325,8 +368,14 @@ def etl(spark, run_date, region_name, table_name):
     merged_filtered_rdd = filtered_rdd.map(list_transformer)
     print("rdd has been transformed into tuples")
 
+    return merged_filtered_rdd
+
+
+def load_rdd(region_name, table_name, rdd):
     # Apply a MapReduce operation to the RDD
-    reduction_output = merged_filtered_rdd.reduce(dynReducer.dynamo_reducer)
+    dynReducer = DynamoReducer(region_name, table_name)
+
+    reduction_output = rdd.reduce(dynReducer.dynamo_reducer)
     print("1st pass dynamo reduction completed")
 
     # Apply the reducer one more time to force any lingering
