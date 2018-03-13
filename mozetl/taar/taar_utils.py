@@ -53,30 +53,61 @@ def store_json_to_s3(json_data, base_filename, date, prefix, bucket):
     write_to_s3(FULL_FILENAME, FULL_FILENAME, prefix, bucket)
 
 
+class AddonChecks:
+
+    MIN_STAR_RATING = 3
+
+    _method_cache = None
+
+    def __init__(self):
+        checks = [k for k in self.__class__.__dict__.keys() if k.startswith("check_")]
+        self._method_cache = [getattr(self, method_name)
+                              for method_name in checks]
+
+    def check_is_webextension(self, extension_meta):
+        addon_files = extension_meta.get('current_version', {}).get('files', {})
+        # If any of the addon files are web_extensions compatible, it can be recommended.
+        return any([f.get("is_webextension", False) for f in addon_files])
+
+    def check_min_rating(self, extension_meta):
+        rating = extension_meta.get('rating', {}).get('average', 0)
+        return rating >= self.MIN_STAR_RATING
+
+    def verify_meta(self, extension_meta):
+        for method in self._method_cache:
+            if not method(extension_meta):
+                return False
+        return True
+
+
 def load_amo_external_whitelist():
     """ Download and parse the AMO add-on whitelist.
 
     :raises RuntimeError: the AMO whitelist file cannot be downloaded or contains
                           no valid add-ons.
     """
-    final_whitelist = []
+
+    # If the load fails, we will have an empty whitelist, this may
+    # be problematic.
     amo_dump = {}
     try:
         # Load the most current AMO dump JSON resource.
         s3 = boto3.client('s3')
         s3_contents = s3.get_object(Bucket=AMO_DUMP_BUCKET, Key=AMO_DUMP_KEY)
-        amo_dump = json.loads(s3_contents['Body'].read())
+        byte_data = s3_contents['Body'].read()
+        with open('/tmp/amo_dump.json', 'wb') as fout:
+            fout.write(byte_data)
+        amo_dump = json.loads(byte_data.decode('utf8'))
     except ClientError:
         logger.exception("Failed to download from S3", extra={
             "bucket": AMO_DUMP_BUCKET,
             "key": AMO_DUMP_KEY})
 
-    # If the load fails, we will have an empty whitelist, this may be problematic.
-    for key, value in amo_dump.items():
-        addon_files = value.get('current_version', {}).get('files', {})
-        # If any of the addon files are web_extensions compatible, it can be recommended.
-        if any([f.get("is_webextension", False) for f in addon_files]):
-            final_whitelist.append(value['guid'])
+    final_whitelist = []
+    checker = AddonChecks()
+    for _ignored, extension_meta in amo_dump.items():
+        if checker.verify_meta(extension_meta):
+            final_whitelist.append(extension_meta['guid'])
 
     if len(final_whitelist) == 0:
         raise RuntimeError("Empty AMO whitelist detected")
