@@ -38,7 +38,8 @@ def get_samples(spark):
     processing on.
     """
     return (
-        spark.sql("SELECT * FROM longitudinal")
+        (sqlContext.read.option("mergeSchema", True)
+         .parquet("s3://telemetry-test-bucket/longitudinal/v20180714/"))
         .where("active_addons IS NOT null")
         .where("size(active_addons[0]) > 2")
         .where("size(active_addons[0]) < 100")
