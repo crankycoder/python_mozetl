@@ -38,6 +38,7 @@ def get_samples(spark):
     """
     return (
         spark.sql("SELECT * FROM longitudinal")
+        .where("client_id IS NOT null")
         .where("active_addons IS NOT null")
         .where("size(active_addons[0]) > 2")
         .where("size(active_addons[0]) < 100")
