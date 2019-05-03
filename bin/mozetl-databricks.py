@@ -114,6 +114,9 @@ def run_submit(args):
             "spot_bid_price_percent"
         ] = args.spot_price_percent
 
+    if args.aws_zone_id:
+        config["new_cluster"]["aws_attributes"]["zone_id"] = args.aws_zone_id
+
     logging.info(json.dumps(config, indent=2))
 
     # https://docs.databricks.com/api/latest/jobs.html#runs-submit
@@ -171,6 +174,12 @@ def parse_arguments():
         default="ON_DEMAND",
         choices=["ON_DEMAND", "SPOT", "SPOT_WITH_FALLBACK"],
         help="Set the AWS availability type for the cluster",
+    )
+    parser.add_argument(
+        "--aws-zone-id",
+        type=str,
+        default="us-west-2b",
+        help="Your machine type may only be available in some availability zones.",
     )
     parser.add_argument(
         "--spot-price-percent",

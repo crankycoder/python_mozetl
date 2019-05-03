@@ -9,6 +9,7 @@ from mozetl.search.aggregates import search_aggregates_click, search_clients_dai
 from mozetl.sync import bookmark_validation
 from mozetl.tab_spinner import tab_spinner
 from mozetl.taar import (
+    taar_collaborative,
     taar_locale,
     taar_similarity,
     taar_dynamo,
@@ -41,6 +42,7 @@ entry_point.add_command(taar_lite_guidranking.main, "taar_lite_guidranking")
 entry_point.add_command(taar_amowhitelist.main, "taar_amowhitelist")
 entry_point.add_command(taar_update_whitelist.main, "taar_update_whitelist")
 entry_point.add_command(taar_ensemble.main, "taar_ensemble")
+entry_point.add_command(taar_collaborative.main, "taar_collaborative")
 entry_point.add_command(addon_aggregates.main, "addon_aggregates")
 entry_point.add_command(maudau.main, "engagement_ratio")
 entry_point.add_command(landfill_sampler.main, "landfill_sampler")

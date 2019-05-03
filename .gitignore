@@ -10,12 +10,14 @@ temp/
 dist/
 build/
 
+# Python artifacts
+.eggs
+*.egg-info/
 .tox/
 .coverage
 .cache/
 metastore_db/
 
-*.egg-info/
 
 # Ignore vim temp files
 .*sw?
