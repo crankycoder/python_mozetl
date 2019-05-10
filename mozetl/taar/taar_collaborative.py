@@ -130,15 +130,14 @@ def flatmapClosure(whitelist_bag, amo_db_bag):
                     # looking up byte type keys in dictionaries where
                     # keys are strings.
                     if isinstance(client_id, bytes):
-                        client_id = client_id.decode('utf8')
+                        client_id = client_id.decode("utf8")
                         msg = "Fixed byte encoded client_id [{}]".format(client_id)
                         logger.info(msg)
 
                     if isinstance(addonId, bytes):
-                        addonId = addonId.decode('utf8')
+                        addonId = addonId.decode("utf8")
                         msg = "Fixed byte encoded addonId [{}]".format(addonId)
                         logger.info(msg)
-
                     yield [
                         client_id,
                         addonId,
@@ -164,7 +163,7 @@ def get_ratings(spark, client_addons):
     )
 
 
-def fit_ratings_model(ratings):
+def fit_ratings_model(ratings, max_iter):
     # Build the recommendation model using ALS on the training data
     # The old scala code used a custom NaNRegressionEvaluator which discarded NaN prediction values.
     # Note we set cold start strategy to 'drop' to ensure we don't get NaN evaluation metrics.
@@ -177,7 +176,7 @@ def fit_ratings_model(ratings):
 
     als = ALS(
         seed=42,
-        maxIter=20,
+        maxIter=max_iter,
         implicitPrefs=True,
         userCol="clientId",
         itemCol="addonId",
@@ -193,7 +192,7 @@ def fit_ratings_model(ratings):
     # Scala implementation of the CollaborativeRecommender
     paramGrid = (
         ParamGridBuilder()
-        .addGrid(als.rank, [15, 25, 35])
+        .addGrid(als.rank, [10]) # [15, 25, 35])
         .addGrid(als.regParam, [0.01, 0.1])
         .addGrid(als.alpha, [1.0, 10, 20])
         .build()
@@ -203,8 +202,8 @@ def fit_ratings_model(ratings):
         estimator=als,
         evaluator=evaluator,
         estimatorParamMaps=paramGrid,
-        numFolds=10,
-        parallelism=20,
+        numFolds=2,  # 10,
+        parallelism=1,  # 20,
     )
     model = cv.fit(ratings)
     return model
@@ -227,9 +226,13 @@ def compute_serialized_mapping(addonMappingList, amo_db):
         preferred_name = addon_meta["name"].get(locale, "")
         _cur_version = addon_meta.get("current_version", {})
         _files = _cur_version.get("files", [])
-        isWebextension = "is_webextension" in _files
+        isWebextension = (
+            sum(file_dict.get("is_webextension", False) for file_dict in _files) > 0
+        )
 
         if preferred_name != "":
+            if type(addonId) == bytes:
+                addonId = addonId.decode("utf8")
             tmpSerializedMapping[positive_hash(addonId)] = {
                 "name": preferred_name,
                 "id": addonId,
@@ -254,7 +257,7 @@ def load_json_to_s3(serializedMapping, best_model):
         json.dumps(serializedMapping),
         "addon_mapping.new",
         date,
-        "telemetry-ml/addon_recommender",
+        "telemetry-ml/addon_recommender/",
         "telemetry-public-analysis-2",
     )
 
@@ -263,23 +266,19 @@ def load_json_to_s3(serializedMapping, best_model):
         json.dumps(best_model),
         "item_matrix.new",
         date,
-        "telemetry-ml/addon_recommender",
+        "telemetry-ml/addon_recommender/",
         "telemetry-public-analysis-2",
     )
 
 
-def transform(spark, df, whitelist_bag, amo_db_bag, amo_db):
+def transform(spark, df, whitelist_bag, amo_db_bag, amo_db, max_iter=20):
     # Transform and filter the client_addons dataframe with addon
     # metadata and addon whitelists
     # Construct the client_addons dataframe and collect all the data
     client_addons = df.rdd.flatMap(flatmapClosure(whitelist_bag, amo_db_bag))
-    client_addons.collect()
 
     ratings = get_ratings(spark, client_addons)
     logger.info("Ratings generated")
-
-    model = fit_ratings_model(ratings)
-    logger.info("Model has been fitted")
 
     # Serialize add-on mapping and merge it with the AMODatabase to get a map of:
     # hashedClientID -> dict of addon metadata with keys (name, id, isWebExtension)
@@ -287,11 +286,18 @@ def transform(spark, df, whitelist_bag, amo_db_bag, amo_db):
     # Note that the lambda fucntion here extracts the un-hashed
     # addonID from the client_addons dataframe.
     addonMappingList = client_addons.map(lambda x: x[1]).distinct().cache().collect()
+
+    # Coerce the elements of the list to bytes if necessary
+    if type(addonMappingList[0]) == str:
+        addonMappingList = [x.encode("utf8") for x in addonMappingList]
+
     logger.info("addonMappingList generated")
 
     serializedMapping = compute_serialized_mapping(addonMappingList, amo_db)
     logger.info("serializedMapping generated")
 
+    model = fit_ratings_model(ratings, max_iter)
+    logger.info("Model has been fitted")
     best_model = transform_to_python_model(model)
     logger.info("Best model computed.")
     return best_model, serializedMapping
