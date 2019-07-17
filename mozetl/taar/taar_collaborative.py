@@ -96,7 +96,7 @@ def get_df(spark, date_from, sampling=7):
     return df
 
 
-def flatmapClosure(whitelist_bag, amo_db_bag):
+def flatmapClosure(whitelist_guid_set, amo_db_set):
     """ This function is applied to the clients data extract so that
     we get a DataFrame consisting of the 4-tuple :
 
@@ -111,7 +111,7 @@ def flatmapClosure(whitelist_bag, amo_db_bag):
         client_id = rdd_data["client_id"]
         for addon in rdd_data["active_addons"]:
             addonId = addon.addon_id.encode("utf8")
-            if addonId in whitelist_bag and addonId in amo_db_bag:
+            if addonId in whitelist_guid_set and addonId in amo_db_set:
                 blocklisted = addon.blocklisted
                 signedState = addon.signed_state
                 userDisabled = addon.user_disabled
@@ -192,7 +192,7 @@ def fit_ratings_model(ratings, max_iter):
     # Scala implementation of the CollaborativeRecommender
     paramGrid = (
         ParamGridBuilder()
-        .addGrid(als.rank, [10]) # [15, 25, 35])
+        .addGrid(als.rank, [15, 25, 35])
         .addGrid(als.regParam, [0.01, 0.1])
         .addGrid(als.alpha, [1.0, 10, 20])
         .build()
@@ -271,54 +271,57 @@ def load_json_to_s3(serializedMapping, best_model):
     )
 
 
-def transform(spark, df, whitelist_bag, amo_db_bag, amo_db, max_iter=20):
-    # Transform and filter the client_addons dataframe with addon
-    # metadata and addon whitelists
-    # Construct the client_addons dataframe and collect all the data
-    client_addons = df.rdd.flatMap(flatmapClosure(whitelist_bag, amo_db_bag))
+class CollaborativeJob:
+    def __init__(self, spark):
+        self._spark = spark
 
-    ratings = get_ratings(spark, client_addons)
-    logger.info("Ratings generated")
+    def extract(self, date, sample_rate):
+        # Load S3 data
+        # Load the latest whitelist of approved addons
+        white_list = read_from_s3(TOP200_S3_FNAME, TOP200_S3_PREFIX, TOP200_S3_BUCKET)
+        whitelist_guid_set = set([x.encode("utf8") for x in white_list])
 
-    # Serialize add-on mapping and merge it with the AMODatabase to get a map of:
-    # hashedClientID -> dict of addon metadata with keys (name, id, isWebExtension)
-    #
-    # Note that the lambda fucntion here extracts the un-hashed
-    # addonID from the client_addons dataframe.
-    addonMappingList = client_addons.map(lambda x: x[1]).distinct().cache().collect()
+        # Load the AMO database from the S3 JSON blob
+        amo_db = read_from_s3(AMO_S3_FNAME, AMO_PREFIX, AMO_BUCKET)
+        amo_db_set = set([x.encode("utf8") for x in amo_db.keys()])
 
-    # Coerce the elements of the list to bytes if necessary
-    if type(addonMappingList[0]) == str:
-        addonMappingList = [x.encode("utf8") for x in addonMappingList]
+        df = get_df(self._spark, date)
 
-    logger.info("addonMappingList generated")
+        if sample_rate != 0:
+            df = df.sample(False, sample_rate)
 
-    serializedMapping = compute_serialized_mapping(addonMappingList, amo_db)
-    logger.info("serializedMapping generated")
+        return df, whitelist_guid_set, amo_db_set, amo_db
 
-    model = fit_ratings_model(ratings, max_iter)
-    logger.info("Model has been fitted")
-    best_model = transform_to_python_model(model)
-    logger.info("Best model computed.")
-    return best_model, serializedMapping
+    def transform(self, df, whitelist_guid_set, amo_db_set, amo_db, max_iter=20):
+        # Transform and filter the client_addons dataframe with addon
+        # metadata and addon whitelists
+        # Construct the client_addons dataframe and collect all the data
+        client_addons = df.rdd.flatMap(flatmapClosure(whitelist_guid_set, amo_db_set))
 
+        ratings = get_ratings(self._spark, client_addons)
+        logger.info("Ratings generated")
 
-def extract(spark, date, sample_rate):
-    # Load S3 data
-    # Load the latest whitelist of approved addons
-    white_list = read_from_s3(TOP200_S3_FNAME, TOP200_S3_PREFIX, TOP200_S3_BUCKET)
-    whitelist_bag = set([x.encode("utf8") for x in white_list])
+        # Serialize add-on mapping and merge it with the AMODatabase to get a map of:
+        # hashedClientID -> dict of addon metadata with keys (name, id, isWebExtension)
+        #
+        # Note that the lambda fucntion here extracts the un-hashed
+        # addonID from the client_addons dataframe.
+        addonMappingList = client_addons.map(lambda x: x[1]).distinct().cache().collect()
 
-    # Load the AMO database from the S3 JSON blob
-    amo_db = read_from_s3(AMO_S3_FNAME, AMO_PREFIX, AMO_BUCKET)
-    amo_db_bag = set([x.encode("utf8") for x in amo_db.keys()])
+        # Coerce the elements of the list to bytes if necessary
+        if type(addonMappingList[0]) == str:
+            addonMappingList = [x.encode("utf8") for x in addonMappingList]
 
-    df = get_df(spark, date)
+        logger.info("addonMappingList generated")
 
-    if sample_rate != 0:
-        df = df.sample(False, sample_rate)
+        serializedMapping = compute_serialized_mapping(addonMappingList, amo_db)
+        logger.info("serializedMapping generated")
 
-    return df, whitelist_bag, amo_db_bag, amo_db
+        model = fit_ratings_model(ratings, max_iter)
+        logger.info("Model has been fitted")
+        best_model = transform_to_python_model(model)
+        logger.info("Best model computed.")
+        return best_model, serializedMapping
 
 
 @click.command()
@@ -333,11 +336,12 @@ def main(date, bucket, prefix, sample_rate):
         .getOrCreate()
     )
 
-    df, whitelist_bag, amo_db_bag, amo_db = extract(spark, date, sample_rate)
+    collab = CollaborativeJob(spark)
+    df, whitelist_guid_set, amo_db_set, amo_db = collab.extract(date, sample_rate)
     logger.info("Data extract completed")
 
-    best_model, serializedMapping = transform(
-        spark, df, whitelist_bag, amo_db_bag, amo_db
+    best_model, serializedMapping = collab.transform(
+        df, whitelist_guid_set, amo_db_set, amo_db
     )
     logger.info("Data transform completed")
 

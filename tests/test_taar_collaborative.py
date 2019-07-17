@@ -1,16 +1,5 @@
 """Test suite for TAAR Ensemble Job."""
 
-import copy
-import functools
-import pytest
-
-import random
-import logging
-
-random.seed(42)
-
-#  from numpy import repeat as np_repeat
-from mozetl.taar import taar_collaborative
 from pyspark.sql.types import (
     StructField,
     StructType,
@@ -18,8 +7,16 @@ from pyspark.sql.types import (
     LongType,
     BooleanType,
     ArrayType,
-    Row,
 )
+
+from mozetl.taar import taar_collaborative
+import functools
+import logging
+import pytest
+import random
+
+random.seed(42)
+
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("py4j").setLevel(logging.ERROR)
@@ -162,8 +159,6 @@ def extract_df(generate_data):
     dataframe.unpersist()
 
 
-
-
 @pytest.mark.timeout(90)
 def test_transform_dataset(spark, extract_df):
 
@@ -178,7 +173,36 @@ def test_transform_dataset(spark, extract_df):
         amo_db[guid] = meta
 
     whitelist = amo_db_bag = amo_db
-    best_model, serializedMapping = taar_collaborative.transform(
-        spark, extract_df, whitelist, amo_db_bag, amo_db, max_iter=5
+    collab = taar_collaborative.CollaborativeJob(spark)
+    best_model, serializedMapping = collab.transform(
+        extract_df, whitelist, amo_db_bag, amo_db, max_iter=5
     )
-    print("this is a model {}  {}".format(best_model, serializedMapping))
+
+    for record in best_model:
+        assert "id" in record
+        assert "features" in record
+
+    EXPECTED_MAPPING = {
+        2282477: {
+            "name": "preferred name addon-00001",
+            "id": "guid-00001",
+            "isWebextension": True,
+        },
+        2282480: {
+            "name": "preferred name addon-00004",
+            "id": "guid-00004",
+            "isWebextension": True,
+        },
+        2282478: {
+            "name": "preferred name addon-00002",
+            "id": "guid-00002",
+            "isWebextension": True,
+        },
+        2282479: {
+            "name": "preferred name addon-00003",
+            "id": "guid-00003",
+            "isWebextension": True,
+        },
+    }
+
+    assert EXPECTED_MAPPING == serializedMapping
