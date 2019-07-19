@@ -255,7 +255,7 @@ def load_json_to_s3(serializedMapping, best_model):
     date = datetime.date.today().strftime("%Y%m%d")
     store_json_to_s3(
         json.dumps(serializedMapping),
-        "addon_mapping.new",
+        "addon_mapping.new.",
         date,
         "telemetry-ml/addon_recommender/",
         "telemetry-public-analysis-2",
@@ -264,7 +264,7 @@ def load_json_to_s3(serializedMapping, best_model):
     # save the best model out to S3 as item_matrix
     store_json_to_s3(
         json.dumps(best_model),
-        "item_matrix.new",
+        "item_matrix.new.",
         date,
         "telemetry-ml/addon_recommender/",
         "telemetry-public-analysis-2",
